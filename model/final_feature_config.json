@@ -1,0 +1,47 @@
+{
+    "features": [
+        "HbA1c",
+        "Fasting_Glucose",
+        "Carbs",
+        "Protein",
+        "Meal_Hour_Sin",
+        "Meal_Hour_Cos",
+        "Meal_Type"
+    ],
+    "numerical_features": [
+        "HbA1c",
+        "Fasting_Glucose",
+        "Carbs",
+        "Protein",
+        "Meal_Hour_Sin",
+        "Meal_Hour_Cos"
+    ],
+    "categorical_features": [
+        "Meal_Type"
+    ],
+    "target": "iAUC",
+    "group": "Participant_ID",
+    "meal_time_features": [
+        "Meal_Hour_Sin",
+        "Meal_Hour_Cos"
+    ],
+    "model_architecture": {
+        "Dense_1": 64,
+        "Dense_2": 32,
+        "Dense_3": 16,
+        "Dropout": 0.2,
+        "Output": 1
+    },
+    "training": {
+        "optimizer": "Adam",
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "max_epochs": 300,
+        "early_stopping_patience": 30
+    },
+    "validation": {
+        "method": "GroupShuffleSplit",
+        "test_size": 0.2,
+        "random_state": 42
+    }
+}

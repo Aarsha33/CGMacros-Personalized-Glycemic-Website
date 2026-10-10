@@ -1,0 +1,11 @@
+{
+    "MAE": 1583.163163383514,
+    "RMSE": 2124.1100753228493,
+    "R2": 0.37244482005051793,
+    "epochs_trained": 264,
+    "training_samples": 1374,
+    "validation_samples": 332,
+    "training_participants": 36,
+    "validation_participants": 9,
+    "participant_overlap": 0
+}

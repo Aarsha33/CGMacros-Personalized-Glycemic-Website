@@ -1,0 +1,7 @@
+data/CGMacros_dateshifted365.zip
+data/CGMacros/
+data/combined_cgmacros.csv
+data/meal_iauc_dataset.csv
+data/meal_personalized_dataset.csv
+__pycache__/
+.DS_Store

@@ -1,0 +1,24 @@
+{
+    "Model_A_Personalized": [
+        "Age",
+        "Gender",
+        "BMI",
+        "HbA1c",
+        "Fasting_Glucose",
+        "Carbs",
+        "Protein",
+        "Meal_Hour_Sin",
+        "Meal_Hour_Cos",
+        "Meal_Type"
+    ],
+    "Model_B_Reduced": [
+        "HbA1c",
+        "Fasting_Glucose",
+        "Carbs",
+        "Protein",
+        "Meal_Hour_Sin",
+        "Meal_Hour_Cos",
+        "Meal_Type"
+    ],
+    "Target": "iAUC"
+}
