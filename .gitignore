@@ -1,7 +1,12 @@
-data/CGMacros_dateshifted365.zip
 data/CGMacros/
+data/CGMacros 2/
+data/CGMacros_dateshifted365.zip
 data/combined_cgmacros.csv
 data/meal_iauc_dataset.csv
 data/meal_personalized_dataset.csv
+data/glucose_trajectory_dataset.csv
+data/glucose_trajectory_personalized.csv
+app_before_multifood.py
 __pycache__/
+*.pyc
 .DS_Store

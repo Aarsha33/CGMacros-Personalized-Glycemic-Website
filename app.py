@@ -1,8 +1,9 @@
 import streamlit as st
-from pathlib import Path
-import sys
-from importlib.util import spec_from_file_location, module_from_spec
+import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+import importlib.util
+from datetime import time
 
 
 # ============================================================
@@ -20,140 +21,256 @@ st.set_page_config(
 # PROJECT PATHS
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_DIR = PROJECT_ROOT / "src"
-
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+BASE_DIR = Path(__file__).resolve().parent
+SRC_DIR = BASE_DIR / "src"
 
 
 # ============================================================
-# MODULE LOADER
+# LOAD PYTHON MODULES
 # ============================================================
 
 def load_module(module_name, filename):
-    """Load a Python module whose filename starts with a number."""
 
     module_path = SRC_DIR / filename
 
-    spec = spec_from_file_location(
+    spec = importlib.util.spec_from_file_location(
         module_name,
         module_path
     )
 
-    if spec is None or spec.loader is None:
-        raise ImportError(
-            f"Could not load module: {module_path}"
-        )
+    module = importlib.util.module_from_spec(spec)
 
-    module = module_from_spec(spec)
     spec.loader.exec_module(module)
 
     return module
 
 
-# ============================================================
-# LOAD PREDICTION MODULE
-# ============================================================
-
-meal_prediction_module = load_module(
-    "cgmacros_meal_prediction",
-    "08_meal_prediction.py"
+# Original iAUC prediction engine
+prediction_engine = load_module(
+    "prediction_engine",
+    "06_prediction_engine.py"
 )
 
-predict_meal = meal_prediction_module.predict_meal
+
+# Food database
+food_database = load_module(
+    "food_database",
+    "07_food_database.py"
+)
+
+
+# Glucose trajectory prediction engine
+trajectory_module = load_module(
+    "glucose_trajectory_prediction",
+    "13_glucose_trajectory_prediction.py"
+)
+
+predict_glucose_trajectory = (
+    trajectory_module.predict_glucose_trajectory
+)
 
 
 # ============================================================
 # LOAD FOOD DATABASE
 # ============================================================
 
-food_database_module = load_module(
-    "cgmacros_food_database",
-    "07_food_database.py"
-)
-
-load_food_database = food_database_module.load_food_database
-
-
-# ============================================================
-# LOAD WHAT-IF MODULE
-# ============================================================
-
-what_if_module = load_module(
-    "cgmacros_what_if",
-    "09_what_if.py"
-)
-
-run_what_if = what_if_module.run_what_if
-
-
-# ============================================================
-# LOAD FOOD DATABASE ONCE
-# ============================================================
-
 @st.cache_data
-def get_food_database():
-    return load_food_database()
+def load_foods():
+
+    return food_database.load_food_database()
 
 
-food_database = get_food_database()
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
-
-if "prediction_result" not in st.session_state:
-    st.session_state.prediction_result = None
+food_df = load_foods()
 
 
 # ============================================================
-# HEADER
+# HELPER FUNCTIONS
 # ============================================================
 
-st.title("🩸 CGMacros Personalized Glycemic Response")
+def calculate_bmi(weight, height):
+    """
+    Calculate BMI from weight in kg and height in cm.
+    """
+
+    if height <= 0:
+        return 0.0
+
+    height_m = height / 100
+
+    return weight / (height_m ** 2)
+
+
+def calculate_meal_nutrients(food_items):
+    """
+    Calculate total carbohydrates and protein
+    for all foods in the meal.
+    """
+
+    total_carbs = 0.0
+    total_protein = 0.0
+
+    rows = []
+
+    for item in food_items:
+
+        food_name = item["food"]
+        quantity = item["quantity"]
+
+        nutrients = food_database.calculate_nutrients(
+            food_name,
+            quantity,
+            food_df
+        )
+
+        carbs = float(nutrients["Carbs_g"])
+        protein = float(nutrients["Protein_g"])
+
+        total_carbs += carbs
+        total_protein += protein
+
+        rows.append({
+            "Food": food_name,
+            "Quantity (g)": quantity,
+            "Carbohydrates (g)": round(carbs, 2),
+            "Protein (g)": round(protein, 2)
+        })
+
+    return total_carbs, total_protein, rows
+
+
+def predict_meal_response(
+    hba1c,
+    fasting_glucose,
+    carbs,
+    protein,
+    meal_time,
+    meal_type
+):
+    """
+    Send the meal information to the trained ANN.
+    """
+
+    return prediction_engine.predict_glycemic_response(
+        hba1c=hba1c,
+        fasting_glucose=fasting_glucose,
+        carbs=carbs,
+        protein=protein,
+        meal_time=meal_time,
+        meal_type=meal_type
+    )
+
+
+def plot_glucose_trajectory(
+    trajectory,
+    title="Predicted Postprandial Glucose Response",
+    show_what_if=False,
+    what_if_trajectory=None
+):
+    """
+    Plot original glucose trajectory and optionally
+    the What-If trajectory on the same graph.
+    """
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    # Original trajectory
+    ax.plot(
+        trajectory["Time_After_Meal"],
+        trajectory["Predicted_Glucose"],
+        marker="o",
+        linewidth=2.5,
+        label="Original"
+    )
+
+    # What-If trajectory
+    if (
+        show_what_if
+        and what_if_trajectory is not None
+    ):
+
+        ax.plot(
+            what_if_trajectory["Time_After_Meal"],
+            what_if_trajectory["Predicted_Glucose"],
+            marker="o",
+            linewidth=2.5,
+            label="What-If"
+        )
+
+    ax.set_xlabel(
+        "Time after meal (minutes)"
+    )
+
+    ax.set_ylabel(
+        "Predicted glucose (mg/dL)"
+    )
+
+    ax.set_title(title)
+
+    ax.set_xticks(
+        [0, 30, 60, 90, 120]
+    )
+
+    ax.grid(
+        alpha=0.25
+    )
+
+    ax.legend()
+
+    fig.tight_layout()
+
+    st.pyplot(fig)
+
+    plt.close(fig)
+
+
+# ============================================================
+# PAGE TITLE
+# ============================================================
+
+st.title(
+    "🩸 CGMacros Personalized Glycemic Response"
+)
 
 st.write(
-    "Estimate your predicted post-meal glycemic response "
-    "using your personal glucose information and meal details."
+    "ANN-based personalized prediction of postprandial "
+    "glycemic response from meal composition and health data."
 )
 
 st.info(
-    "This is a model prediction, not a medical measurement."
+    "This is a research and educational prototype. "
+    "The prediction is a model estimate and is not a medical measurement."
 )
 
 
 # ============================================================
-# PERSONAL INFORMATION
+# USER INFORMATION
 # ============================================================
 
-st.header("👤 Your Information")
+st.header("👤 User Information")
 
 col1, col2, col3 = st.columns(3)
+
 
 with col1:
 
     name = st.text_input(
-        "Name",
-        placeholder="Enter your name"
+        "Name"
     )
 
     age = st.number_input(
         "Age",
         min_value=1,
         max_value=120,
-        value=25,
-        step=1
+        value=25
     )
 
     gender = st.selectbox(
         "Gender",
         [
-            "Prefer not to say",
             "Female",
             "Male",
-            "Other"
+            "Other",
+            "Prefer not to say"
         ]
     )
 
@@ -164,41 +281,39 @@ with col2:
         "Height (cm)",
         min_value=50.0,
         max_value=250.0,
-        value=165.0,
-        step=0.5
+        value=165.0
     )
 
     weight = st.number_input(
         "Weight (kg)",
-        min_value=10.0,
-        max_value=300.0,
-        value=60.0,
-        step=0.5
+        min_value=20.0,
+        max_value=250.0,
+        value=60.0
+    )
+
+    bmi = calculate_bmi(
+        weight,
+        height
+    )
+
+    st.metric(
+        "Calculated BMI",
+        f"{bmi:.2f}"
     )
 
 
 with col3:
 
-    if height > 0:
-        bmi = weight / ((height / 100) ** 2)
-    else:
-        bmi = 0.0
-
-    st.metric(
-        "BMI",
-        f"{bmi:.1f}"
-    )
-
     hba1c = st.number_input(
         "HbA1c (%)",
-        min_value=3.0,
+        min_value=2.0,
         max_value=20.0,
         value=5.4,
         step=0.1
     )
 
     fasting_glucose = st.number_input(
-        "Fasting glucose (mg/dL)",
+        "Fasting Glucose (mg/dL)",
         min_value=40.0,
         max_value=500.0,
         value=91.0,
@@ -210,19 +325,20 @@ with col3:
 # MEAL INFORMATION
 # ============================================================
 
-st.header("🍽️ Your Meal")
+st.header("🍽️ Meal Information")
 
 col1, col2 = st.columns(2)
+
 
 with col1:
 
     meal_type = st.selectbox(
-        "Meal type",
+        "Meal Type",
         [
-            "Breakfast",
-            "Lunch",
-            "Dinner",
-            "Snack"
+            "breakfast",
+            "lunch",
+            "dinner",
+            "snack"
         ]
     )
 
@@ -230,545 +346,816 @@ with col1:
 with col2:
 
     meal_time = st.time_input(
-        "Meal time"
+        "Meal Time",
+        value=time(12, 30)
     )
 
 
 # ============================================================
-# FOOD SELECTION
+# FOOD ITEMS
 # ============================================================
 
-st.subheader("🥗 Food")
+st.header("🥗 Food Items")
 
-food_names = food_database["name"].tolist()
-
-selected_food = st.selectbox(
-    "Select a food",
-    food_names
-)
-
-quantity = st.number_input(
-    "Quantity (grams)",
-    min_value=1.0,
-    max_value=2000.0,
-    value=100.0,
-    step=5.0
+st.write(
+    "Add all foods included in the meal. "
+    "For example: rice + chicken + curry + curd."
 )
 
 
-# ============================================================
-# SHOW NUTRIENTS
-# ============================================================
-
-selected_food_row = food_database[
-    food_database["name"] == selected_food
-].iloc[0]
-
-carbs_preview = (
-    float(selected_food_row["carbs_g"])
-    * quantity
-    / 100
-)
-
-protein_preview = (
-    float(selected_food_row["protein_g"])
-    * quantity
-    / 100
-)
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    st.metric(
-        "Estimated carbohydrates",
-        f"{carbs_preview:.2f} g"
-    )
-
-with col2:
-
-    st.metric(
-        "Estimated protein",
-        f"{protein_preview:.2f} g"
-    )
-
-
-# ============================================================
-# PREDICT BUTTON
-# ============================================================
-
-st.divider()
-
-predict_button = st.button(
-    "🔮 Predict My Post-Meal Response",
-    type="primary",
-    use_container_width=True
+num_foods = st.number_input(
+    "Number of food items",
+    min_value=1,
+    max_value=10,
+    value=1,
+    step=1
 )
 
 
+food_items = []
+
+food_names = (
+    food_df["name"]
+    .dropna()
+    .tolist()
+)
+
+
+for i in range(int(num_foods)):
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+
+        selected_food = st.selectbox(
+            f"Food item {i + 1}",
+            food_names,
+            key=f"food_{i}"
+        )
+
+    with col2:
+
+        quantity = st.number_input(
+            "Quantity (g)",
+            min_value=1.0,
+            max_value=2000.0,
+            value=100.0,
+            step=10.0,
+            key=f"quantity_{i}"
+        )
+
+    food_items.append({
+        "food": selected_food,
+        "quantity": quantity
+    })
+
+
 # ============================================================
-# RUN PREDICTION
+# CALCULATE MEAL NUTRIENTS
 # ============================================================
 
-if predict_button:
+if st.button(
+    "Calculate Meal Nutrients",
+    type="secondary"
+):
 
     try:
 
-        result = predict_meal(
-            food_name=selected_food,
-            quantity_grams=quantity,
-            hba1c=hba1c,
-            fasting_glucose=fasting_glucose,
-            meal_time=meal_time.strftime("%H:%M"),
-            meal_type=meal_type,
-            food_df=food_database
+        total_carbs, total_protein, nutrient_rows = (
+            calculate_meal_nutrients(
+                food_items
+            )
         )
 
-        st.session_state.prediction_result = result
+        st.session_state["nutrient_rows"] = (
+            nutrient_rows
+        )
 
-    except Exception as error:
+        st.session_state["total_carbs"] = (
+            total_carbs
+        )
+
+        st.session_state["total_protein"] = (
+            total_protein
+        )
+
+    except Exception as e:
 
         st.error(
-            f"Prediction could not be completed: {error}"
+            f"Could not calculate nutrients: {e}"
         )
 
 
 # ============================================================
-# DISPLAY RESULT
+# DISPLAY NUTRIENTS
 # ============================================================
 
-if st.session_state.prediction_result is not None:
+if "total_carbs" in st.session_state:
 
-    result = st.session_state.prediction_result
+    st.subheader(
+        "📊 Meal Nutrient Summary"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "Total Carbohydrates",
+            f"{st.session_state['total_carbs']:.2f} g"
+        )
+
+    with col2:
+
+        st.metric(
+            "Total Protein",
+            f"{st.session_state['total_protein']:.2f} g"
+        )
+
+    nutrient_table = pd.DataFrame(
+        st.session_state["nutrient_rows"]
+    )
+
+    st.dataframe(
+        nutrient_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# ============================================================
+# ANN PREDICTION
+# ============================================================
+
+st.header("🧠 ANN Prediction")
+
+
+if st.button(
+    "Predict Glycemic Response",
+    type="primary"
+):
+
+    try:
+
+        # ----------------------------------------------------
+        # CALCULATE TOTAL MEAL NUTRIENTS
+        # ----------------------------------------------------
+
+        total_carbs, total_protein, nutrient_rows = (
+            calculate_meal_nutrients(
+                food_items
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # ORIGINAL iAUC PREDICTION
+        # ----------------------------------------------------
+
+        prediction = predict_meal_response(
+            hba1c=hba1c,
+            fasting_glucose=fasting_glucose,
+            carbs=total_carbs,
+            protein=total_protein,
+            meal_time=meal_time,
+            meal_type=meal_type
+        )
+
+        prediction = float(
+            prediction
+        )
+
+
+        # ----------------------------------------------------
+        # ORIGINAL GLUCOSE TRAJECTORY
+        # ----------------------------------------------------
+
+        original_trajectory = (
+            predict_glucose_trajectory(
+                hba1c=hba1c,
+                fasting_glucose=fasting_glucose,
+                carbs=total_carbs,
+                protein=total_protein,
+                meal_time=meal_time,
+                meal_type=meal_type
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # SAVE ORIGINAL RESULTS
+        # ----------------------------------------------------
+
+        st.session_state["original_prediction"] = (
+            prediction
+        )
+
+        st.session_state["original_food_items"] = (
+            food_items.copy()
+        )
+
+        st.session_state["original_carbs"] = (
+            total_carbs
+        )
+
+        st.session_state["original_protein"] = (
+            total_protein
+        )
+
+        st.session_state["original_trajectory"] = (
+            original_trajectory
+        )
+
+        st.session_state["original_meal_time"] = (
+            meal_time
+        )
+
+        st.session_state["original_meal_type"] = (
+            meal_type
+        )
+
+
+        # ----------------------------------------------------
+        # DISPLAY RESULT
+        # ----------------------------------------------------
+
+        st.success(
+            "Prediction calculated successfully."
+        )
+
+
+        st.metric(
+            "Predicted Meal-level iAUC",
+            f"{prediction:,.2f} mg/dL × min"
+        )
+
+
+        st.caption(
+            "iAUC = incremental area under the glucose-response curve."
+        )
+
+
+        # ----------------------------------------------------
+        # DISPLAY MEAL COMPOSITION
+        # ----------------------------------------------------
+
+        st.subheader(
+            "🍽️ Meal Composition"
+        )
+
+        st.dataframe(
+            pd.DataFrame(nutrient_rows),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+        # ----------------------------------------------------
+        # TOTAL NUTRIENTS
+        # ----------------------------------------------------
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.metric(
+                "Total Carbohydrates",
+                f"{total_carbs:.2f} g"
+            )
+
+        with col2:
+
+            st.metric(
+                "Total Protein",
+                f"{total_protein:.2f} g"
+            )
+
+
+        # ----------------------------------------------------
+        # ORIGINAL GLUCOSE GRAPH
+        # ----------------------------------------------------
+
+        st.subheader(
+            "📈 Predicted Postprandial Glucose Response"
+        )
+
+        plot_glucose_trajectory(
+            original_trajectory,
+            title="Predicted Postprandial Glucose Response"
+        )
+
+        st.caption(
+            "The graph shows the glucose trajectory predicted "
+            "by the separate CGM-trained trajectory ANN."
+        )
+
+
+        # ----------------------------------------------------
+        # SCIENTIFIC NOTE
+        # ----------------------------------------------------
+
+        st.info(
+            "Two related ANN models are used: the primary model "
+            "predicts meal-level iAUC, while the separate trajectory "
+            "model predicts glucose at 0, 30, 60, 90, and 120 minutes."
+        )
+
+
+    except Exception as e:
+
+        st.error(
+            f"Prediction failed: {e}"
+        )
+
+
+# ============================================================
+# WHAT-IF SIMULATOR
+# ============================================================
+
+if "original_prediction" in st.session_state:
 
     st.divider()
 
-    st.header("📊 Your Predicted Response")
-
-    st.metric(
-        "Predicted post-meal glycemic response",
-        f"{result['Predicted_iAUC']:.2f}"
-    )
+    st.header("🔄 What-If Simulator")
 
     st.write(
-        f"Based on **{result['Quantity_g']:.0f} g "
-        f"of {result['Food']}**, the model predicts "
-        f"a post-meal iAUC of "
-        f"**{result['Predicted_iAUC']:.2f}**."
+        "Create an alternative version of your meal by changing "
+        "the quantity of one or more foods, replacing foods, "
+        "and/or changing the meal time."
     )
 
-    st.caption(
-        "iAUC represents the incremental area under the "
-        "glucose curve used as the prediction target."
+    use_what_if = st.checkbox(
+        "Use What-If Simulator"
     )
 
+    if use_what_if:
 
-    # ========================================================
-    # MEAL SUMMARY
-    # ========================================================
+        st.subheader("🥗 Modify Your Meal")
 
-    st.subheader("Meal Summary")
-
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
-
-    with summary_col1:
-
-        st.write("**Food**")
-        st.write(result["Food"])
-
-    with summary_col2:
-
-        st.write("**Quantity**")
-        st.write(f"{result['Quantity_g']:.0f} g")
-
-    with summary_col3:
-
-        st.write("**Meal type**")
-        st.write(result["Meal_Type"].title())
-
-
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
-
-    with summary_col1:
-
-        st.write("**Carbohydrates**")
-        st.write(f"{result['Carbs_g']:.2f} g")
-
-    with summary_col2:
-
-        st.write("**Protein**")
-        st.write(f"{result['Protein_g']:.2f} g")
-
-    with summary_col3:
-
-        st.write("**Meal time**")
-        st.write(result["Meal_Time"])
-
-
-    # ========================================================
-    # WHAT-IF SIMULATOR
-    # ========================================================
-
-    st.divider()
-
-    st.header("🔄 What-if Simulator")
-
-    st.write(
-        "Explore how changing your meal could change the "
-        "model's predicted post-meal response."
-    )
-
-    st.caption(
-        "Your HbA1c, fasting glucose and meal type remain "
-        "the same while you explore different meal options."
-    )
-
-
-    # ========================================================
-    # WHAT-IF CHANGE TYPE
-    # ========================================================
-
-    change_type = st.radio(
-        "What would you like to change?",
-        [
-            "🍽️ Change amount",
-            "🥗 Change food",
-            "🕐 Change meal time"
-        ],
-        horizontal=True
-    )
-
-
-    # ========================================================
-    # DEFAULT WHAT-IF VALUES
-    # ========================================================
-
-    new_food = selected_food
-    new_quantity = float(quantity)
-    new_meal_time = meal_time
-
-
-    # ========================================================
-    # CHANGE AMOUNT
-    # ========================================================
-
-    if change_type == "🍽️ Change amount":
-
-        st.subheader("Change food amount")
-
-        new_quantity = st.slider(
-            "New quantity (grams)",
-            min_value=1.0,
-            max_value=2000.0,
-            value=float(quantity),
-            step=5.0
+        st.info(
+            "You can change multiple food items at the same time. "
+            "Leave a food unchanged if you do not want to modify it."
         )
 
-        if new_quantity == quantity:
+        # ----------------------------------------------------
+        # COPY ORIGINAL MEAL
+        # ----------------------------------------------------
 
-            st.info(
-                "Move the slider to try a different quantity."
+        what_if_food_items = []
+
+        for i, original_item in enumerate(food_items):
+
+            st.markdown(
+                f"### Food {i + 1}: {original_item['food']}"
             )
 
+            col1, col2, col3 = st.columns([2.5, 1.2, 2.5])
 
-    # ========================================================
-    # CHANGE FOOD
-    # ========================================================
+            # ------------------------------------------------
+            # FOOD SELECTION
+            # ------------------------------------------------
 
-    elif change_type == "🥗 Change food":
+            with col1:
 
-        st.subheader("Change food")
-
-        new_food = st.selectbox(
-            "Choose another food",
-            food_names,
-            index=(
-                food_names.index(selected_food)
-                if selected_food in food_names
-                else 0
-            )
-        )
-
-        st.write(
-            f"Keeping the quantity at **{quantity:.0f} g**."
-        )
-
-
-    # ========================================================
-    # CHANGE MEAL TIME
-    # ========================================================
-
-    elif change_type == "🕐 Change meal time":
-
-        st.subheader("Change meal time")
-
-        new_meal_time = st.time_input(
-            "New meal time",
-            value=meal_time
-        )
-
-        if new_meal_time == meal_time:
-
-            st.info(
-                "Choose a different time to explore a "
-                "what-if scenario."
-            )
-
-
-    # ========================================================
-    # RUN WHAT-IF BUTTON
-    # ========================================================
-
-    st.write("")
-
-    what_if_button = st.button(
-        "🔄 Compare Before vs After",
-        type="secondary",
-        use_container_width=True
-    )
-
-
-    # ========================================================
-    # RUN WHAT-IF SIMULATION
-    # ========================================================
-
-    if what_if_button:
-
-        try:
-
-            what_if_result = run_what_if(
-                original_food=selected_food,
-                original_quantity=float(quantity),
-                original_hba1c=float(hba1c),
-                original_fasting_glucose=float(
-                    fasting_glucose
-                ),
-                original_meal_time=(
-                    meal_time.strftime("%H:%M")
-                ),
-                original_meal_type=meal_type,
-                new_food=new_food,
-                new_quantity=float(new_quantity),
-                new_meal_time=(
-                    new_meal_time.strftime("%H:%M")
+                current_food = st.selectbox(
+                    "Food",
+                    food_names,
+                    index=food_names.index(
+                        original_item["food"]
+                    ),
+                    key=f"what_if_food_{i}"
                 )
-            )
 
+            # ------------------------------------------------
+            # QUANTITY
+            # ------------------------------------------------
 
-            # ==================================================
-            # BEFORE VS AFTER VALUES
-            # ==================================================
+            with col2:
 
-            st.subheader("📊 Your Meal: Before vs After")
+                current_quantity = st.number_input(
+                    "Quantity (g)",
+                    min_value=1.0,
+                    max_value=2000.0,
+                    value=float(
+                        original_item["quantity"]
+                    ),
+                    step=10.0,
+                    key=f"what_if_quantity_{i}"
+                )
 
-            before_value = what_if_result["before"]
-            after_value = what_if_result["after"]
+            # ------------------------------------------------
+            # ORIGINAL QUANTITY DISPLAY
+            # ------------------------------------------------
 
-
-            # ==================================================
-            # VALUE CARDS
-            # ==================================================
-
-            comparison_col1, comparison_col2 = st.columns(2)
-
-            with comparison_col1:
+            with col3:
 
                 st.metric(
-                    "Before",
-                    f"{before_value:.2f}"
+                    "Original quantity",
+                    f"{original_item['quantity']:.0f} g"
                 )
 
-            with comparison_col2:
+            what_if_food_items.append({
+                "food": current_food,
+                "quantity": current_quantity
+            })
 
-                st.metric(
-                    "After",
-                    f"{after_value:.2f}",
-                    delta=f"{after_value - before_value:+.2f}"
-                )
+        # ----------------------------------------------------
+        # MEAL TIME
+        # ----------------------------------------------------
 
+        st.subheader("🕐 Meal Time")
 
-            # ==================================================
-            # PERCENTAGE CHANGE
-            # ==================================================
+        change_meal_time = st.checkbox(
+            "Change meal time"
+        )
 
-            percentage_change = (
-                what_if_result["percentage_change"]
+        if change_meal_time:
+
+            what_if_meal_time = st.time_input(
+                "What-If Meal Time",
+                value=meal_time
             )
 
-            if percentage_change is not None:
+        else:
 
-                if percentage_change > 0:
+            what_if_meal_time = meal_time
 
-                    st.warning(
-                        f"📈 The model predicts a "
-                        f"**{percentage_change:.2f}% higher** "
-                        f"post-meal response after this change."
+            st.write(
+                f"Original meal time: "
+                f"**{meal_time.strftime('%H:%M')}**"
+            )
+
+        # ----------------------------------------------------
+        # RUN WHAT-IF
+        # ----------------------------------------------------
+
+        if st.button(
+            "🚀 Run What-If Prediction",
+            type="primary"
+        ):
+
+            try:
+
+                # =================================================
+                # CALCULATE WHAT-IF NUTRIENTS
+                # =================================================
+
+                what_if_carbs, what_if_protein, what_if_rows = (
+                    calculate_meal_nutrients(
+                        what_if_food_items
+                    )
+                )
+
+                # =================================================
+                # WHAT-IF iAUC PREDICTION
+                # =================================================
+
+                what_if_prediction = predict_meal_response(
+                    hba1c=hba1c,
+                    fasting_glucose=fasting_glucose,
+                    carbs=what_if_carbs,
+                    protein=what_if_protein,
+                    meal_time=what_if_meal_time,
+                    meal_type=meal_type
+                )
+
+                what_if_prediction = float(
+                    what_if_prediction
+                )
+
+                # =================================================
+                # WHAT-IF GLUCOSE TRAJECTORY
+                # =================================================
+
+                what_if_trajectory = (
+                    predict_glucose_trajectory(
+                        hba1c=hba1c,
+                        fasting_glucose=fasting_glucose,
+                        carbs=what_if_carbs,
+                        protein=what_if_protein,
+                        meal_time=what_if_meal_time,
+                        meal_type=meal_type
+                    )
+                )
+
+                # =================================================
+                # ORIGINAL RESULTS
+                # =================================================
+
+                original_prediction = float(
+                    st.session_state[
+                        "original_prediction"
+                    ]
+                )
+
+                original_carbs = float(
+                    st.session_state[
+                        "original_carbs"
+                    ]
+                )
+
+                original_protein = float(
+                    st.session_state[
+                        "original_protein"
+                    ]
+                )
+
+                original_trajectory = (
+                    st.session_state[
+                        "original_trajectory"
+                    ]
+                )
+
+                # =================================================
+                # CALCULATE CHANGES
+                # =================================================
+
+                iauc_change = (
+                    what_if_prediction
+                    - original_prediction
+                )
+
+                if original_prediction != 0:
+
+                    iauc_percentage_change = (
+                        iauc_change
+                        / original_prediction
+                    ) * 100
+
+                else:
+
+                    iauc_percentage_change = 0.0
+
+
+                carbs_change = (
+                    what_if_carbs
+                    - original_carbs
+                )
+
+                protein_change = (
+                    what_if_protein
+                    - original_protein
+                )
+
+                # =================================================
+                # SAVE WHAT-IF RESULTS
+                # =================================================
+
+                st.session_state[
+                    "what_if_prediction"
+                ] = what_if_prediction
+
+                st.session_state[
+                    "what_if_trajectory"
+                ] = what_if_trajectory
+
+                st.session_state[
+                    "what_if_food_items"
+                ] = what_if_food_items.copy()
+
+                st.session_state[
+                    "what_if_carbs"
+                ] = what_if_carbs
+
+                st.session_state[
+                    "what_if_protein"
+                ] = what_if_protein
+
+                st.session_state[
+                    "what_if_meal_time"
+                ] = what_if_meal_time
+
+                # =================================================
+                # DISPLAY iAUC COMPARISON
+                # =================================================
+
+                st.subheader(
+                    "📊 Original vs What-If Prediction"
+                )
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+
+                    st.metric(
+                        "Original iAUC",
+                        f"{original_prediction:,.2f}"
                     )
 
-                elif percentage_change < 0:
+                with col2:
+
+                    st.metric(
+                        "What-If iAUC",
+                        f"{what_if_prediction:,.2f}"
+                    )
+
+                with col3:
+
+                    st.metric(
+                        "Change",
+                        f"{iauc_change:+,.2f}",
+                        delta=(
+                            f"{iauc_percentage_change:+.2f}%"
+                        )
+                    )
+
+                # =================================================
+                # NUTRIENT COMPARISON
+                # =================================================
+
+                st.subheader(
+                    "🍽️ Nutrient Comparison"
+                )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+
+                    st.metric(
+                        "Carbohydrates",
+                        f"{what_if_carbs:.2f} g",
+                        delta=(
+                            f"{carbs_change:+.2f} g"
+                        )
+                    )
+
+                with col2:
+
+                    st.metric(
+                        "Protein",
+                        f"{what_if_protein:.2f} g",
+                        delta=(
+                            f"{protein_change:+.2f} g"
+                        )
+                    )
+
+                # =================================================
+                # INTERPRETATION
+                # =================================================
+
+                if iauc_change > 0:
+
+                    st.warning(
+                        "The model predicts a higher "
+                        "post-meal glycemic response "
+                        "for the What-If meal."
+                    )
+
+                elif iauc_change < 0:
 
                     st.success(
-                        f"📉 The model predicts a "
-                        f"**{abs(percentage_change):.2f}% lower** "
-                        f"post-meal response after this change."
+                        "The model predicts a lower "
+                        "post-meal glycemic response "
+                        "for the What-If meal."
                     )
 
                 else:
 
                     st.info(
-                        "The model predicts no change in the "
-                        "post-meal response."
+                        "The model prediction did not change."
                     )
 
+                # =================================================
+                # WHAT-IF MEAL TABLE
+                # =================================================
 
-            # ==================================================
-            # WHAT CHANGED
-            # ==================================================
-
-            st.subheader("🔎 What Changed?")
-
-            change_col1, change_col2 = st.columns(2)
-
-            with change_col1:
-
-                st.write("### Before")
-
-                st.write(
-                    f"🍽️ **Food:** "
-                    f"{what_if_result['original_food']}"
+                st.subheader(
+                    "🥗 What-If Meal Composition"
                 )
 
-                st.write(
-                    f"⚖️ **Amount:** "
-                    f"{what_if_result['original_quantity']:.0f} g"
+                st.dataframe(
+                    pd.DataFrame(
+                        what_if_rows
+                    ),
+                    use_container_width=True,
+                    hide_index=True
                 )
 
-                st.write(
-                    f"🕐 **Meal time:** "
-                    f"{what_if_result['original_meal_time']}"
+                # =================================================
+                # ORIGINAL VS WHAT-IF GRAPH
+                # =================================================
+
+                st.subheader(
+                    "📈 Original vs What-If Glucose Response"
+                )
+
+                plot_glucose_trajectory(
+                    original_trajectory,
+                    title=(
+                        "Original vs What-If "
+                        "Predicted Glucose Response"
+                    ),
+                    show_what_if=True,
+                    what_if_trajectory=(
+                        what_if_trajectory
+                    )
+                )
+
+                st.caption(
+                    "The original and What-If predictions are "
+                    "shown on the same time axis (0–120 minutes) "
+                    "for direct comparison."
+                )
+
+                # =================================================
+                # WHAT CHANGED
+                # =================================================
+
+                st.subheader(
+                    "🔎 What Changed?"
+                )
+
+                changes_found = False
+
+                for i in range(
+                    len(food_items)
+                ):
+
+                    original_item = (
+                        food_items[i]
+                    )
+
+                    new_item = (
+                        what_if_food_items[i]
+                    )
+
+                    if (
+                        original_item["food"]
+                        != new_item["food"]
+                    ):
+
+                        st.write(
+                            f"**Food {i + 1}:** "
+                            f"{original_item['food']} "
+                            f"→ "
+                            f"{new_item['food']}"
+                        )
+
+                        changes_found = True
+
+                    if (
+                        original_item["quantity"]
+                        != new_item["quantity"]
+                    ):
+
+                        st.write(
+                            f"**{new_item['food']} quantity:** "
+                            f"{original_item['quantity']:.0f} g "
+                            f"→ "
+                            f"{new_item['quantity']:.0f} g"
+                        )
+
+                        changes_found = True
+
+                if change_meal_time:
+
+                    st.write(
+                        f"**Meal time:** "
+                        f"{meal_time.strftime('%H:%M')} "
+                        f"→ "
+                        f"{what_if_meal_time.strftime('%H:%M')}"
+                    )
+
+                    changes_found = True
+
+                if not changes_found:
+
+                    st.info(
+                        "No meal changes were made."
+                    )
+
+                # =================================================
+                # SCIENTIFIC NOTE
+                # =================================================
+
+                st.info(
+                    "The primary ANN predicts meal-level iAUC. "
+                    "The separate CGM-trained trajectory ANN "
+                    "predicts glucose at 0, 30, 60, 90, and "
+                    "120 minutes. Both models use the updated "
+                    "meal carbohydrate and protein totals."
+                )
+
+            except Exception as e:
+
+                st.error(
+                    f"What-If prediction failed: {e}"
                 )
 
 
-            with change_col2:
+# ============================================================
+# FOOTER
+# ============================================================
 
-                st.write("### After")
+st.divider()
 
-                st.write(
-                    f"🍽️ **Food:** "
-                    f"{what_if_result['new_food']}"
-                )
+st.caption(
+    "CGMacros Personalized Glycemic Response | "
+    "ANN Research Prototype"
+)
 
-                st.write(
-                    f"⚖️ **Amount:** "
-                    f"{what_if_result['new_quantity']:.0f} g"
-                )
-
-                st.write(
-                    f"🕐 **Meal time:** "
-                    f"{what_if_result['new_meal_time']}"
-                )
-
-
-            # ==================================================
-            # GRAPH
-            # ==================================================
-
-            st.subheader("📊 Before vs After")
-
-            fig, ax = plt.subplots(
-                figsize=(8, 5)
-            )
-
-            labels = [
-                "Before",
-                "After"
-            ]
-
-            values = [
-                before_value,
-                after_value
-            ]
-
-            bars = ax.bar(
-                labels,
-                values,
-                width=0.55
-            )
-
-            ax.set_ylabel(
-                "Predicted post-meal response (iAUC)"
-            )
-
-            ax.set_title(
-                "Your Meal: Before vs After",
-                fontsize=15,
-                fontweight="bold"
-            )
-
-            ax.grid(
-                axis="y",
-                alpha=0.25
-            )
-
-            # Display values above bars.
-            for bar, value in zip(
-                bars,
-                values
-            ):
-
-                ax.text(
-                    bar.get_x()
-                    + bar.get_width() / 2,
-                    bar.get_height(),
-                    f"{value:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=12,
-                    fontweight="bold"
-                )
-
-            # Add space above tallest bar.
-            maximum_value = max(values)
-
-            if maximum_value > 0:
-
-                ax.set_ylim(
-                    0,
-                    maximum_value * 1.20
-                )
-
-            # Remove unnecessary borders.
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
-
-            # ==================================================
-            # INTERPRETATION
-            # ==================================================
-
-            st.subheader("💡 What Does This Mean?")
-
-            st.write(
-                what_if_result["interpretation"]
-            )
-
-            st.caption(
-                "This comparison shows model predictions. "
-                "It is not a medical measurement and does "
-                "not establish a cause-and-effect relationship."
-            )
-
-
-        except Exception as error:
-
-            st.error(
-                f"What-if simulation could not be completed: "
-                f"{error}"
-            )
+st.caption(
+    "Disclaimer: This system provides model-based estimates "
+    "for research and educational purposes only. "
+    "It is not a medical diagnostic or treatment tool."
+)

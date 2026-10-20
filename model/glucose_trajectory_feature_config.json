@@ -1,0 +1,15 @@
+{
+  "numeric_features": [
+    "HbA1c",
+    "Fasting_Glucose",
+    "Carbs",
+    "Protein",
+    "Meal_Hour_Sin",
+    "Meal_Hour_Cos",
+    "Time_After_Meal"
+  ],
+  "categorical_features": [
+    "Meal_Type"
+  ],
+  "target": "Glucose"
+}

@@ -1,0 +1,10 @@
+{
+  "MAE_mg_dL": 24.390198287501477,
+  "RMSE_mg_dL": 31.554015743923898,
+  "R2": 0.3826905305846572,
+  "epochs": 49,
+  "train_rows": 6665,
+  "validation_rows": 1650,
+  "train_participants": 36,
+  "validation_participants": 9
+}
