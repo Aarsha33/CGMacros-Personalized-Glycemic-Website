@@ -662,11 +662,8 @@ if st.button(
 
 
     except Exception as e:
-
-        st.error(
-            f"Prediction failed: {e}"
-        )
-
+        print("ANN prediction failed:", repr(e))
+        st.error(f"Prediction failed: {e}")
 
 # ============================================================
 # WHAT-IF SIMULATOR
@@ -1137,10 +1134,10 @@ if "original_prediction" in st.session_state:
                 )
 
             except Exception as e:
-
                 st.error(
                     f"What-If prediction failed: {e}"
                 )
+
 
 
 # ============================================================

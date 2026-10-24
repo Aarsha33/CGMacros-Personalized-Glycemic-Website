@@ -59,7 +59,11 @@ def predict_glucose_trajectory(
 
     meal_time = str(meal_time)
 
-    hour, minute = meal_time.split(":")
+    if hasattr(meal_time, "hour") and hasattr(meal_time, "minute"):
+        hour = meal_time.hour
+        minute = meal_time.minute
+    else:
+        hour, minute = map(int, str(meal_time).split(":")[:2])
 
     hour = int(hour)
     minute = int(minute)
