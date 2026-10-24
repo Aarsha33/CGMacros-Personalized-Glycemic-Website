@@ -1137,8 +1137,10 @@ if "original_prediction" in st.session_state:
                 )
 
             except Exception as e:
-             st.error(f"Prediction failed: {type(e).__name__}: {e}")
 
+                st.error(
+                    f"What-If prediction failed: {e}"
+                )
 
 
 # ============================================================
