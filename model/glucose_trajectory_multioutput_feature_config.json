@@ -1,0 +1,37 @@
+{
+  "features": [
+    "HbA1c",
+    "Fasting_Glucose",
+    "Carbs",
+    "Protein",
+    "Meal_Hour_Sin",
+    "Meal_Hour_Cos",
+    "Meal_Type"
+  ],
+  "numeric_features": [
+    "HbA1c",
+    "Fasting_Glucose",
+    "Carbs",
+    "Protein",
+    "Meal_Hour_Sin",
+    "Meal_Hour_Cos"
+  ],
+  "categorical_features": [
+    "Meal_Type"
+  ],
+  "target_columns": [
+    "Glucose_0",
+    "Glucose_30",
+    "Glucose_60",
+    "Glucose_90",
+    "Glucose_120"
+  ],
+  "time_points_minutes": [
+    0,
+    30,
+    60,
+    90,
+    120
+  ],
+  "model_type": "multi_output_ann"
+}
